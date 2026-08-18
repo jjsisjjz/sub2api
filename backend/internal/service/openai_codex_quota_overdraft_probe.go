@@ -719,26 +719,6 @@ func codexQuotaOverdraftStateFromAccount(account *Account) (*CodexQuotaOverdraft
 	return &state, true
 }
 
-func codexQuotaOverdraftSchedulingAllowed(account *Account, now time.Time) bool {
-	if !isCodexQuotaOverdraftAccount(account) {
-		return false
-	}
-	state, _ := codexQuotaOverdraftStateFromAccount(account)
-	signal, exhausted := codexQuotaOverdraftSignalFromAccount(account, state, now)
-	if !exhausted || state == nil || !codexQuotaOverdraftStateCoversSignal(state, signal) {
-		return true
-	}
-	return state.Status != codexQuotaOverdraftProbeFailed
-}
-
-func codexQuotaOverdraftSnapshotExhausted(updates map[string]any) bool {
-	if len(updates) == 0 {
-		return false
-	}
-	return parseExtraFloat64(updates["codex_5h_used_percent"]) >= 100 ||
-		parseExtraFloat64(updates["codex_7d_used_percent"]) >= 100
-}
-
 func applyCodexQuotaOverdraftUsage(
 	ctx context.Context,
 	repo UsageLogRepository,

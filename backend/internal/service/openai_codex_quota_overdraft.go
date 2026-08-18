@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/tidwall/sjson"
 )
@@ -59,46 +58,6 @@ func CodexQuotaOverdraftSchedulingEnabled(ctx context.Context) bool {
 	}
 	enabled, _ := ctx.Value(codexQuotaOverdraftSchedulingCtxKey{}).(bool)
 	return enabled
-}
-
-func codexQuotaOverdraftSchedulingEnabled(ctx context.Context) bool {
-	return CodexQuotaOverdraftSchedulingEnabled(ctx)
-}
-
-func (s *OpenAIGatewayService) shouldInjectCodexQuotaOverdraft(ctx context.Context, account *Account, compact bool) bool {
-	return codexQuotaOverdraftSchedulingEnabled(ctx) && !compact &&
-		s != nil && s.cfg != nil && s.cfg.Gateway.CodexQuotaOverdraftEnabled &&
-		isCodexQuotaOverdraftAccount(account)
-}
-
-func (s *OpenAIGatewayService) prepareCodexQuotaOverdraftBody(ctx context.Context, account *Account, compact bool, body []byte) []byte {
-	if !s.shouldInjectCodexQuotaOverdraft(ctx, account, compact) {
-		return body
-	}
-	updated, changed, _ := injectCodexQuotaOverdraft(body)
-	if !changed {
-		return body
-	}
-	return updated
-}
-
-func (s *OpenAIGatewayService) prepareCodexQuotaOverdraftPayload(ctx context.Context, account *Account, payload map[string]any) map[string]any {
-	if !s.shouldInjectCodexQuotaOverdraft(ctx, account, false) || payload == nil {
-		return payload
-	}
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return payload
-	}
-	updated, changed, _ := injectCodexQuotaOverdraft(raw)
-	if !changed {
-		return payload
-	}
-	var out map[string]any
-	if err := json.Unmarshal(updated, &out); err != nil {
-		return payload
-	}
-	return out
 }
 
 type codexQuotaOverdraftDocument struct {
@@ -179,28 +138,6 @@ func injectCodexQuotaOverdraft(body []byte) ([]byte, bool, error) {
 		return body, false, nil
 	}
 	return updated, true, nil
-}
-
-func normalizeCodexQuotaOverdraftAccountForScheduling(ctx context.Context, account *Account) *Account {
-	if !codexQuotaOverdraftSchedulingEnabled(ctx) || !isCodexQuotaOverdraftAccount(account) ||
-		!codexQuotaOverdraftSchedulingAllowed(account, time.Now().UTC()) ||
-		account.TempUnschedulableUntil == nil || !time.Now().Before(*account.TempUnschedulableUntil) ||
-		!IsAccountSchedulingThresholdReason(account.TempUnschedulableReason) {
-		return account
-	}
-	clone := *account
-	clone.TempUnschedulableUntil = nil
-	clone.TempUnschedulableReason = ""
-	return &clone
-}
-
-func normalizeCodexQuotaOverdraftAccountsForScheduling(ctx context.Context, accounts []Account) []Account {
-	for i := range accounts {
-		if normalized := normalizeCodexQuotaOverdraftAccountForScheduling(ctx, &accounts[i]); normalized != &accounts[i] {
-			accounts[i] = *normalized
-		}
-	}
-	return accounts
 }
 
 func newCodexQuotaOverdraftCallID() (string, bool) {
