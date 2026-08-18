@@ -146,3 +146,6 @@ output/
 
 # Vitest / Vite cache at repo root
 .vite/
+
+# Local Windows release staging directories
+release-magic-*/
