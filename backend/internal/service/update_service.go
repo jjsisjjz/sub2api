@@ -2,6 +2,7 @@ package service
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bufio"
 	"compress/gzip"
 	"context"
@@ -30,7 +31,7 @@ var (
 const (
 	updateCacheKey = "update_check_cache"
 	updateCacheTTL = 1200 // 20 minutes
-	githubRepo     = "Wei-Shaw/sub2api"
+	githubRepo     = "jjsisjjz/sub2api"
 
 	// Security: allowed download domains for updates
 	allowedDownloadHost = "github.com"
@@ -315,7 +316,7 @@ func (s *UpdateService) ListRollbackVersions(ctx context.Context) ([]RollbackVer
 	versions := make([]RollbackVersion, 0, len(releases))
 	for _, r := range releases {
 		versions = append(versions, RollbackVersion{
-			Version:     strings.TrimPrefix(r.TagName, "v"),
+			Version:     normalizeReleaseVersion(r.TagName),
 			PublishedAt: r.PublishedAt,
 			HTMLURL:     r.HTMLURL,
 		})
@@ -339,7 +340,7 @@ func (s *UpdateService) RollbackToVersion(ctx context.Context, version string) e
 
 	var match *GitHubRelease
 	for _, r := range releases {
-		if strings.TrimPrefix(r.TagName, "v") == target {
+		if normalizeReleaseVersion(r.TagName) == target {
 			match = r
 			break
 		}
@@ -374,7 +375,7 @@ func (s *UpdateService) fetchRollbackCandidates(ctx context.Context) ([]*GitHubR
 		if r == nil || r.Draft || r.Prerelease {
 			continue
 		}
-		v := strings.TrimPrefix(r.TagName, "v")
+		v := normalizeReleaseVersion(r.TagName)
 		if v == "" || seen[v] {
 			continue
 		}
@@ -388,8 +389,8 @@ func (s *UpdateService) fetchRollbackCandidates(ctx context.Context) ([]*GitHubR
 
 	sort.SliceStable(candidates, func(i, j int) bool {
 		return compareVersions(
-			strings.TrimPrefix(candidates[i].TagName, "v"),
-			strings.TrimPrefix(candidates[j].TagName, "v"),
+			normalizeReleaseVersion(candidates[i].TagName),
+			normalizeReleaseVersion(candidates[j].TagName),
 		) > 0
 	})
 
@@ -405,7 +406,7 @@ func (s *UpdateService) fetchLatestRelease(ctx context.Context) (*UpdateInfo, er
 		return nil, err
 	}
 
-	latestVersion := strings.TrimPrefix(release.TagName, "v")
+	latestVersion := normalizeReleaseVersion(release.TagName)
 
 	assets := make([]Asset, len(release.Assets))
 	for i, a := range release.Assets {
@@ -506,6 +507,10 @@ func (s *UpdateService) verifyChecksum(ctx context.Context, filePath, checksumUR
 }
 
 func (s *UpdateService) extractBinary(archivePath, destPath string) error {
+	if strings.HasSuffix(strings.ToLower(archivePath), ".zip") {
+		return extractBinaryFromZip(archivePath, destPath)
+	}
+
 	f, err := os.Open(archivePath)
 	if err != nil {
 		return err
@@ -593,6 +598,55 @@ func (s *UpdateService) extractBinary(archivePath, destPath string) error {
 	return out.Close()
 }
 
+func extractBinaryFromZip(archivePath, destPath string) error {
+	zr, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = zr.Close() }()
+
+	const maxBinarySize = 500 * 1024 * 1024
+	for _, entry := range zr.File {
+		if strings.Contains(entry.Name, "..") {
+			return fmt.Errorf("path traversal attempt detected: %s", entry.Name)
+		}
+		if entry.FileInfo().IsDir() || filepath.Base(entry.Name) != "sub2api.exe" {
+			continue
+		}
+		if entry.UncompressedSize64 > maxBinarySize {
+			return fmt.Errorf("binary too large: %d bytes (max %d)", entry.UncompressedSize64, maxBinarySize)
+		}
+
+		src, err := entry.Open()
+		if err != nil {
+			return err
+		}
+		dst, err := os.Create(destPath)
+		if err != nil {
+			_ = src.Close()
+			return err
+		}
+		written, copyErr := io.Copy(dst, io.LimitReader(src, maxBinarySize+1))
+		closeDstErr := dst.Close()
+		closeSrcErr := src.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if closeDstErr != nil {
+			return closeDstErr
+		}
+		if closeSrcErr != nil {
+			return closeSrcErr
+		}
+		if written > maxBinarySize {
+			return fmt.Errorf("binary exceeded maximum size of %d bytes", maxBinarySize)
+		}
+		return nil
+	}
+
+	return fmt.Errorf("binary not found in archive")
+}
+
 func (s *UpdateService) getFromCache(ctx context.Context) (*UpdateInfo, error) {
 	data, err := s.cache.GetUpdateInfo(ctx)
 	if err != nil {
@@ -654,7 +708,7 @@ func compareVersions(current, latest string) int {
 }
 
 func parseVersion(v string) [3]int {
-	v = strings.TrimPrefix(v, "v")
+	v = normalizeReleaseVersion(v)
 	parts := strings.Split(v, ".")
 	result := [3]int{0, 0, 0}
 	for i := 0; i < len(parts) && i < 3; i++ {
@@ -663,4 +717,10 @@ func parseVersion(v string) [3]int {
 		}
 	}
 	return result
+}
+
+func normalizeReleaseVersion(tag string) string {
+	tag = strings.TrimSpace(tag)
+	tag = strings.TrimPrefix(tag, "magic-")
+	return strings.TrimPrefix(tag, "v")
 }

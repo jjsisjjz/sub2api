@@ -3,8 +3,11 @@
 package service
 
 import (
+	"archive/zip"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -67,6 +70,45 @@ func TestUpdateServicePerformUpdateNoUpdateReturnsSentinel(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrNoUpdateAvailable))
 	require.ErrorIs(t, err, ErrNoUpdateAvailable)
+}
+
+func TestUpdateServiceRecognizesMagicReleaseVersion(t *testing.T) {
+	svc := NewUpdateService(
+		&updateServiceCacheStub{},
+		&updateServiceGitHubClientStub{
+			release: &GitHubRelease{
+				TagName: "magic-v0.1.179",
+				Name:    "Sub2API magic 0.1.179",
+			},
+		},
+		"0.1.178",
+		"release",
+	)
+
+	info, err := svc.CheckUpdate(context.Background(), true)
+
+	require.NoError(t, err)
+	require.Equal(t, "0.1.179", info.LatestVersion)
+	require.True(t, info.HasUpdate)
+}
+
+func TestUpdateServiceExtractsWindowsZip(t *testing.T) {
+	archivePath := filepath.Join(t.TempDir(), "sub2api_0.1.179_windows_amd64.zip")
+	archiveFile, err := os.Create(archivePath)
+	require.NoError(t, err)
+	zipWriter := zip.NewWriter(archiveFile)
+	entry, err := zipWriter.Create("sub2api.exe")
+	require.NoError(t, err)
+	_, err = entry.Write([]byte("magic-binary"))
+	require.NoError(t, err)
+	require.NoError(t, zipWriter.Close())
+	require.NoError(t, archiveFile.Close())
+
+	destPath := filepath.Join(t.TempDir(), "sub2api.exe")
+	require.NoError(t, extractBinaryFromZip(archivePath, destPath))
+	extracted, err := os.ReadFile(destPath)
+	require.NoError(t, err)
+	require.Equal(t, []byte("magic-binary"), extracted)
 }
 
 func newRollbackTestService(current string, releases []*GitHubRelease) *UpdateService {
