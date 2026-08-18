@@ -209,9 +209,20 @@ jobs:
           UPSTREAM_TAG: ${{ steps.release.outputs.tag }}
         run: |
           release_tag="magic-v${VERSION}"
-          git tag -a "$release_tag" -m "Magic build based on ${UPSTREAM_TAG}"
-          git push origin "$release_tag"
-          gh release create "$release_tag" \
-            "release-magic/sub2api-magic-${VERSION}-windows-amd64.zip" \
-            --title "Sub2API magic ${VERSION}" \
-            --notes "Automated magic build based on upstream ${UPSTREAM_TAG}."
+          package="release-magic/sub2api-magic-${VERSION}-windows-amd64.zip"
+          title="Sub2API magic ${VERSION}"
+          notes="Automated magic build based on upstream ${UPSTREAM_TAG}."
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git rev-parse --verify "refs/tags/${release_tag}" >/dev/null 2>&1; then
+            git tag -a "$release_tag" -m "Magic build based on ${UPSTREAM_TAG}"
+            git push origin "$release_tag"
+          fi
+          if gh release view "$release_tag" >/dev/null 2>&1; then
+            gh release upload "$release_tag" "$package" --clobber
+            gh release edit "$release_tag" --title "$title" --notes "$notes"
+          else
+            gh release create "$release_tag" "$package" \
+              --title "$title" \
+              --notes "$notes"
+          fi
