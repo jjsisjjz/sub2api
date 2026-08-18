@@ -114,7 +114,8 @@ async function selectButtonByText(wrapper: ReturnType<typeof mountModal>, text: 
 async function submitApiKeyAccount(
   platform: 'openai' | 'anthropic',
   enableLongContextBilling = false,
-  disableUpstreamBillingProbe = false
+  disableUpstreamBillingProbe = false,
+  enableResponsesWeeklyOverdraft = false
 ) {
   const wrapper = mountModal()
   await selectButtonByText(wrapper, platform === 'openai' ? 'OpenAI' : 'admin.accounts.claudeConsole')
@@ -128,6 +129,9 @@ async function submitApiKeyAccount(
   }
   if (disableUpstreamBillingProbe) {
     await wrapper.get('[data-testid="upstream-billing-auto-probe"]').trigger('click')
+  }
+  if (enableResponsesWeeklyOverdraft) {
+    await wrapper.get('[data-testid="openai-responses-weekly-overdraft-toggle"]').trigger('click')
   }
   await wrapper.get('form#create-account-form').trigger('submit.prevent')
   await flushPromises()
@@ -247,6 +251,13 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
 
     expect(createAccountMock).toHaveBeenCalledTimes(1)
     expect(createAccountMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBe(true)
+  })
+
+  it('writes the OpenAI Responses weekly overdraft flag to extra when enabled', async () => {
+    await submitApiKeyAccount('openai', false, false, true)
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]?.extra?.openai_responses_weekly_overdraft_enabled).toBe(true)
   })
 
   it('omits the OpenAI setting for non-OpenAI account creation', async () => {

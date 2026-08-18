@@ -82,6 +82,57 @@
         </div>
       </div>
 
+      <!-- OpenAI Responses weekly overdraft -->
+      <div
+        v-if="allOpenAIPassthroughCapable"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="mb-3 flex items-center justify-between">
+          <div class="flex-1 pr-4">
+            <label
+              id="bulk-edit-openai-responses-weekly-overdraft-label"
+              class="input-label mb-0"
+              for="bulk-edit-openai-responses-weekly-overdraft-enabled"
+            >
+              {{ t('admin.accounts.openai.responsesWeeklyOverdraft') }}
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.responsesWeeklyOverdraftDesc') }}
+            </p>
+          </div>
+          <input
+            v-model="enableOpenAIResponsesWeeklyOverdraft"
+            id="bulk-edit-openai-responses-weekly-overdraft-enabled"
+            type="checkbox"
+            aria-controls="bulk-edit-openai-responses-weekly-overdraft-body"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <div
+          id="bulk-edit-openai-responses-weekly-overdraft-body"
+          :class="!enableOpenAIResponsesWeeklyOverdraft && 'pointer-events-none opacity-50'"
+          role="group"
+          aria-labelledby="bulk-edit-openai-responses-weekly-overdraft-label"
+        >
+          <button
+            id="bulk-edit-openai-responses-weekly-overdraft-toggle"
+            type="button"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              openAIResponsesWeeklyOverdraftEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+            @click="openAIResponsesWeeklyOverdraftEnabled = !openAIResponsesWeeklyOverdraftEnabled"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                openAIResponsesWeeklyOverdraftEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
       <!-- OpenAI Codex namespace 工具摊平（兼容开关，仅 OAuth） -->
       <div
         v-if="allOpenAIOAuthOnly"
@@ -1661,6 +1712,7 @@ const enableOpenAIFlattenNamespaces = ref(false)
 const enableOpenAILongContextBilling = ref(false)
 const enableOpenAIEndpointCapabilities = ref(false)
 const enableOpenAIResponsesMode = ref(false)
+const enableOpenAIResponsesWeeklyOverdraft = ref(false)
 const enableOpenAIWSMode = ref(false)
 const enableOpenAIAPIKeyWSMode = ref(false)
 const enableUpstreamBillingAutoProbe = ref(false)
@@ -1692,6 +1744,7 @@ const rateMultiplier = ref(1)
 const status = ref<'active' | 'inactive'>('active')
 const groupIds = ref<number[]>([])
 const openaiPassthroughEnabled = ref(false)
+const openAIResponsesWeeklyOverdraftEnabled = ref(false)
 // Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
 const openaiFlattenNamespacesEnabled = ref(false)
 const openAILongContextBillingEnabled = ref(false)
@@ -2012,6 +2065,11 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
         : openAIResponsesMode.value
   }
 
+  if (enableOpenAIResponsesWeeklyOverdraft.value && allOpenAIPassthroughCapable.value) {
+    const extra = ensureExtra()
+    extra.openai_responses_weekly_overdraft_enabled = openAIResponsesWeeklyOverdraftEnabled.value
+  }
+
   if (enableModelRestriction.value && !isOpenAIModelRestrictionDisabled.value) {
     // 统一使用 model_mapping 字段
     if (modelRestrictionMode.value === 'whitelist') {
@@ -2194,6 +2252,7 @@ const handleSubmit = async () => {
     (enableOpenAILongContextBilling.value && allOpenAIPassthroughCapable.value) ||
     (enableOpenAIEndpointCapabilities.value && allOpenAIAPIKey.value) ||
     (enableOpenAIResponsesMode.value && allOpenAIAPIKey.value) ||
+    enableOpenAIResponsesWeeklyOverdraft.value ||
     enableModelRestriction.value ||
     enableCustomErrorCodes.value ||
     enableInterceptWarmup.value ||
@@ -2356,6 +2415,7 @@ watch(
       enableOpenAILongContextBilling.value = false
       enableOpenAIEndpointCapabilities.value = false
       enableOpenAIResponsesMode.value = false
+      enableOpenAIResponsesWeeklyOverdraft.value = false
       enableOpenAIWSMode.value = false
       enableOpenAIAPIKeyWSMode.value = false
       enableUpstreamBillingAutoProbe.value = false
@@ -2374,6 +2434,7 @@ watch(
       openAILongContextBillingEnabled.value = false
       openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
       openAIResponsesMode.value = 'auto'
+      openAIResponsesWeeklyOverdraftEnabled.value = false
       modelRestrictionMode.value = 'whitelist'
       allowedModels.value = []
       modelMappings.value = []

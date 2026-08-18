@@ -293,6 +293,25 @@ describe('BulkEditAccountModal', () => {
     })
   })
 
+  it('OpenAI 账号批量编辑可开启 Responses weekly overdraft', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['openai'],
+      selectedTypes: ['oauth']
+    })
+
+    await wrapper.get('#bulk-edit-openai-responses-weekly-overdraft-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-openai-responses-weekly-overdraft-toggle').trigger('click')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: {
+        openai_responses_weekly_overdraft_enabled: true
+      }
+    })
+  })
+
   it('namespace 摊平开关不对 setup-token 等非 OAuth 选择展示', async () => {
     const wrapper = mountModal({
       selectedPlatforms: ['openai'],

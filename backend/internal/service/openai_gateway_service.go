@@ -416,6 +416,7 @@ type OpenAIGatewayService struct {
 	concurrencyService    *ConcurrencyService
 	billingService        *BillingService
 	rateLimitService      *RateLimitService
+	codexQuotaOverdraft   *CodexQuotaOverdraftCoordinator
 	billingCacheService   *BillingCacheService
 	userGroupRateResolver *userGroupRateResolver
 	httpUpstream          HTTPUpstream
@@ -498,6 +499,7 @@ func NewOpenAIGatewayService(
 	// 拿不到配置，故在此发布进程级开关快照。配置取反义，零值即「强制统一出口开启」。
 	if cfg != nil {
 		SetCodexIdentityEnforcementEnabled(!cfg.Gateway.DisableCodexIdentityEnforcement)
+		SetCodexQuotaOverdraftEnabled(cfg.Gateway.CodexQuotaOverdraftEnabled)
 	}
 	svc := &OpenAIGatewayService{
 		accountRepo:         accountRepo,
@@ -545,6 +547,12 @@ func NewOpenAIGatewayService(
 	}
 	svc.logOpenAIWSModeBootstrap()
 	return svc
+}
+
+func (s *OpenAIGatewayService) SetCodexQuotaOverdraftCoordinator(coordinator *CodexQuotaOverdraftCoordinator) {
+	if s != nil {
+		s.codexQuotaOverdraft = coordinator
+	}
 }
 
 // ResolveChannelMapping 解析渠道级模型映射（代理到 ChannelService）

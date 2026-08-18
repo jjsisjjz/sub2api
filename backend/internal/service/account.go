@@ -85,7 +85,10 @@ type Account struct {
 
 type OpenAIEndpointCapability string
 
-const openAILongContextBillingEnabledKey = "openai_long_context_billing_enabled"
+const (
+	openAILongContextBillingEnabledKey       = "openai_long_context_billing_enabled"
+	openAIResponsesWeeklyOverdraftEnabledKey = "openai_responses_weekly_overdraft_enabled"
+)
 
 const (
 	OpenAIEndpointCapabilityChatCompletions OpenAIEndpointCapability = "chat_completions"
@@ -916,6 +919,12 @@ func (a *Account) AllowsOpenAICompact() bool {
 		return true
 	}
 	return supported
+}
+
+// IsOpenAIResponsesWeeklyOverdraftEnabled reports whether this OAuth account
+// opted into the Codex 5h/7d quota-overdraft request path.
+func (a *Account) IsOpenAIResponsesWeeklyOverdraftEnabled() bool {
+	return a != nil && a.IsOpenAI() && a.getExtraBool(openAIResponsesWeeklyOverdraftEnabledKey)
 }
 
 // GetCompactModelMapping returns compact-only model remapping configuration.

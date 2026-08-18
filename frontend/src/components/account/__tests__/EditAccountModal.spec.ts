@@ -416,6 +416,29 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_long_context_billing_enabled).toBe(false)
   })
 
+  it('loads and clears the per-account OpenAI Responses weekly overdraft toggle', async () => {
+    const account = buildAccount()
+    account.extra = {
+      openai_responses_weekly_overdraft_enabled: true
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const toggle = wrapper.get('[data-testid="openai-responses-weekly-overdraft-toggle"]')
+    expect(toggle.attributes('aria-checked')).toBe('true')
+
+    await toggle.trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty(
+      'openai_responses_weekly_overdraft_enabled'
+    )
+  })
+
   it('loads and clears the OAuth-only Codex namespace flatten toggle', async () => {
     const account = buildAccount()
     account.type = 'oauth'
@@ -487,7 +510,8 @@ describe('EditAccountModal', () => {
   it('does not render or submit the long-context billing toggle for Spark shadow accounts', async () => {
     const account = buildOpenAISparkShadowAccount()
     account.extra = {
-      openai_long_context_billing_enabled: false
+      openai_long_context_billing_enabled: false,
+      openai_responses_weekly_overdraft_enabled: true
     }
     updateAccountMock.mockReset()
     checkMixedChannelRiskMock.mockReset()
@@ -502,6 +526,9 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty(
       'openai_long_context_billing_enabled'
+    )
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty(
+      'openai_responses_weekly_overdraft_enabled'
     )
   })
 

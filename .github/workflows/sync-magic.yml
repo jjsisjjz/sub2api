@@ -1,0 +1,204 @@
+name: Sync magic branch
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: Upstream tag or latest
+        required: true
+        default: latest
+        type: string
+      publish:
+        description: Publish a downloadable Windows package
+        required: true
+        default: true
+        type: boolean
+  schedule:
+    - cron: '23 3 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-magic-branch
+  cancel-in-progress: false
+
+env:
+  MAGIC_BRANCH: magic
+  UPSTREAM_REPOSITORY: Wei-Shaw/sub2api
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout magic branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.MAGIC_BRANCH }}
+          fetch-depth: 0
+
+      - name: Fetch upstream tags
+        run: |
+          git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git" || true
+          git fetch upstream --tags --prune
+
+      - name: Select upstream release
+        id: release
+        env:
+          REQUESTED_TAG: ${{ github.event.inputs.upstream_tag || 'latest' }}
+        run: |
+          tag="$REQUESTED_TAG"
+          if [ "$tag" = "latest" ]; then
+            tag="$(git tag --list 'v*' --sort=-v:refname | head -n 1)"
+          fi
+          git rev-parse --verify "${tag}^{commit}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Detect update
+        id: detect
+        env:
+          UPSTREAM_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          if git merge-base --is-ancestor "${UPSTREAM_TAG}^{commit}" HEAD; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge upstream release
+        if: steps.detect.outputs.changed == 'true'
+        id: merge
+        continue-on-error: true
+        env:
+          UPSTREAM_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config rerere.enabled true
+          if git merge --no-ff --no-edit "${UPSTREAM_TAG}^{commit}"; then
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+          else
+            git diff --name-only --diff-filter=U | tee sync-conflicts.txt
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Upload merge conflict report
+        if: steps.merge.outputs.conflict == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: magic-sync-conflicts-${{ steps.release.outputs.version }}
+          path: sync-conflicts.txt
+
+      - name: Stop on merge conflicts
+        if: steps.merge.outputs.conflict == 'true'
+        run: exit 1
+
+      - name: Setup pnpm
+        if: steps.detect.outputs.changed == 'true'
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.13.1
+
+      - name: Setup Node.js
+        if: steps.detect.outputs.changed == 'true'
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        if: steps.detect.outputs.changed == 'true'
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Test and lint frontend
+        if: steps.detect.outputs.changed == 'true'
+        working-directory: frontend
+        run: |
+          pnpm test:run
+          pnpm lint:check
+
+      - name: Build frontend
+        if: steps.detect.outputs.changed == 'true'
+        working-directory: frontend
+        run: pnpm build
+
+      - name: Setup Go
+        if: steps.detect.outputs.changed == 'true'
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Test backend
+        if: steps.detect.outputs.changed == 'true'
+        working-directory: backend
+        run: go test ./...
+
+      - name: Update version and commit
+        if: steps.detect.outputs.changed == 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          UPSTREAM_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          printf '%s\n' "$VERSION" > backend/cmd/server/VERSION
+          git add backend/cmd/server/VERSION
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(magic): sync upstream ${UPSTREAM_TAG}"
+          fi
+
+      - name: Build Windows package
+        if: steps.detect.outputs.changed == 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          mkdir -p release-magic/package
+          commit="$(git rev-parse --short HEAD)"
+          built="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          cd backend
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
+            -buildvcs=false -tags embed -trimpath \
+            -ldflags "-s -w -X main.Version=${VERSION} -X main.Commit=magic-${commit} -X main.Date=${built} -X main.BuildType=release" \
+            -o ../release-magic/package/sub2api.exe ./cmd/server
+          cd ../release-magic/package
+          sha256sum sub2api.exe > SHA256SUMS.txt
+          printf '%s\n' \
+            '$ErrorActionPreference = "Stop"' \
+            '$runtimeDir = Split-Path -Parent $MyInvocation.MyCommand.Path' \
+            '$env:DATA_DIR = $runtimeDir' \
+            '$configPath = Join-Path $runtimeDir "config.yaml"' \
+            'if (Test-Path -LiteralPath $configPath) { $env:CONFIG_FILE = $configPath }' \
+            '& (Join-Path $runtimeDir "sub2api.exe")' \
+            'exit $LASTEXITCODE' > run.ps1
+          zip -9 "../sub2api-magic-${VERSION}-windows-amd64.zip" sub2api.exe run.ps1 SHA256SUMS.txt
+
+      - name: Push magic branch
+        if: steps.detect.outputs.changed == 'true'
+        run: git push origin "HEAD:${MAGIC_BRANCH}"
+
+      - name: Upload workflow artifact
+        if: steps.detect.outputs.changed == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: sub2api-magic-${{ steps.release.outputs.version }}-windows-amd64
+          path: release-magic/sub2api-magic-${{ steps.release.outputs.version }}-windows-amd64.zip
+
+      - name: Publish magic release
+        if: >-
+          steps.detect.outputs.changed == 'true' &&
+          (github.event_name == 'schedule' || github.event.inputs.publish == 'true')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+          UPSTREAM_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          release_tag="magic-v${VERSION}"
+          git tag -a "$release_tag" -m "Magic build based on ${UPSTREAM_TAG}"
+          git push origin "$release_tag"
+          gh release create "$release_tag" \
+            "release-magic/sub2api-magic-${VERSION}-windows-amd64.zip" \
+            --title "Sub2API magic ${VERSION}" \
+            --notes "Automated magic build based on upstream ${UPSTREAM_TAG}."

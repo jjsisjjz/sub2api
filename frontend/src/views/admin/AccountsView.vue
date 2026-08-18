@@ -264,6 +264,13 @@
                   :privacy-mode="row.extra?.privacy_mode || row.parent_privacy_mode"
                   :subscription-expires-at="row.credentials?.subscription_expires_at || row.parent_subscription_expires_at" />
                 <span
+                  v-if="isOpenAIResponsesWeeklyOverdraftEnabled(row)"
+                  class="inline-flex items-center rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                  :title="t('admin.accounts.openai.responsesWeeklyOverdraftDesc')"
+                >
+                  {{ t('admin.accounts.openai.responsesWeeklyOverdraft') }}
+                </span>
+                <span
                   v-if="getAntigravityTierLabel(row)"
                   :class="['inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', getAntigravityTierClass(row)]"
                 >
@@ -1591,6 +1598,12 @@ function getOpenAIAuthMode(row: any): string | undefined {
   if (!row || row.platform !== 'openai' || row.type !== 'oauth') return undefined
   const authMode = row.credentials?.auth_mode
   return typeof authMode === 'string' && authMode.trim() ? authMode : undefined
+}
+
+function isOpenAIResponsesWeeklyOverdraftEnabled(row: any): boolean {
+  if (!row || row.platform !== 'openai') return false
+  const extra = row.extra as Record<string, unknown> | undefined
+  return extra?.openai_responses_weekly_overdraft_enabled === true
 }
 
 // Antigravity 订阅等级辅助函数

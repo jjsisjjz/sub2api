@@ -694,6 +694,11 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 	payload := createOpenAITestPayload(upstreamTestModelID, isOAuth)
 	payloadBytes, _ := json.Marshal(payload)
+	if isOAuth && s.cfg != nil && s.cfg.Gateway.CodexQuotaOverdraftEnabled && account.IsOpenAIResponsesWeeklyOverdraftEnabled() {
+		if overdraftBody, changed, _ := injectCodexQuotaOverdraft(payloadBytes); changed {
+			payloadBytes = overdraftBody
+		}
+	}
 
 	// Send test_start event once. A task-invalid Agent Identity response may
 	// restart this probe after registering a replacement task.
