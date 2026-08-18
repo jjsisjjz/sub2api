@@ -187,6 +187,9 @@ jobs:
             '& (Join-Path $runtimeDir "sub2api.exe")' \
             'exit $LASTEXITCODE' > run.ps1
           zip -9 "../sub2api-magic-${VERSION}-windows-amd64.zip" sub2api.exe run.ps1 SHA256SUMS.txt
+          cd ..
+          cp "sub2api-magic-${VERSION}-windows-amd64.zip" "sub2api_${VERSION}_windows_amd64.zip"
+          sha256sum "sub2api_${VERSION}_windows_amd64.zip" > checksums.txt
 
       - name: Push magic branch
         if: steps.detect.outputs.changed == 'true'
@@ -197,7 +200,10 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: sub2api-magic-${{ steps.release.outputs.version }}-windows-amd64
-          path: release-magic/sub2api-magic-${{ steps.release.outputs.version }}-windows-amd64.zip
+          path: |
+            release-magic/sub2api-magic-${{ steps.release.outputs.version }}-windows-amd64.zip
+            release-magic/sub2api_${{ steps.release.outputs.version }}_windows_amd64.zip
+            release-magic/checksums.txt
 
       - name: Publish magic release
         if: >-
@@ -211,19 +217,24 @@ jobs:
         run: |
           release_tag="magic-v${VERSION}"
           package="release-magic/sub2api-magic-${VERSION}-windows-amd64.zip"
+          updater_package="release-magic/sub2api_${VERSION}_windows_amd64.zip"
+          checksums="release-magic/checksums.txt"
           title="Sub2API magic ${VERSION}"
           notes="Automated magic build based on upstream ${UPSTREAM_TAG}."
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if ! git rev-parse --verify "refs/tags/${release_tag}" >/dev/null 2>&1; then
+          if git rev-parse --verify "refs/tags/${release_tag}" >/dev/null 2>&1; then
+            git tag -fa "$release_tag" -m "Magic build based on ${UPSTREAM_TAG}"
+            git push --force origin "refs/tags/${release_tag}"
+          else
             git tag -a "$release_tag" -m "Magic build based on ${UPSTREAM_TAG}"
             git push origin "$release_tag"
           fi
           if gh release view "$release_tag" >/dev/null 2>&1; then
-            gh release upload "$release_tag" "$package" --clobber
+            gh release upload "$release_tag" "$package" "$updater_package" "$checksums" --clobber
             gh release edit "$release_tag" --title "$title" --notes "$notes"
           else
-            gh release create "$release_tag" "$package" \
+            gh release create "$release_tag" "$package" "$updater_package" "$checksums" \
               --title "$title" \
               --notes "$notes"
           fi
