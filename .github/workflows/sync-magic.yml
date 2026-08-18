@@ -13,6 +13,11 @@ on:
         required: true
         default: true
         type: boolean
+      rebuild_current:
+        description: Build and publish the current magic branch even without an upstream update
+        required: true
+        default: false
+        type: boolean
   schedule:
     - cron: '23 3 * * *'
 
@@ -59,15 +64,23 @@ jobs:
         id: detect
         env:
           UPSTREAM_TAG: ${{ steps.release.outputs.tag }}
+          REBUILD_CURRENT: ${{ github.event.inputs.rebuild_current || 'false' }}
         run: |
-          if git merge-base --is-ancestor "${UPSTREAM_TAG}^{commit}" HEAD; then
+          if [ "$REBUILD_CURRENT" = "true" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "merge=false" >> "$GITHUB_OUTPUT"
+          elif git merge-base --is-ancestor "${UPSTREAM_TAG}^{commit}" HEAD; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "merge=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "merge=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Merge upstream release
-        if: steps.detect.outputs.changed == 'true'
+        if: >-
+          steps.detect.outputs.changed == 'true' &&
+          steps.detect.outputs.merge == 'true'
         id: merge
         continue-on-error: true
         env:

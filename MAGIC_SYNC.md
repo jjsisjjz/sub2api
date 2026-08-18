@@ -39,6 +39,14 @@ git push -u origin magic
 
 发生源码冲突时，Action 会上传 `magic-sync-conflicts-*` 文件清单并停止，不会覆盖魔改。
 
+首次发布当前魔改基线时，在 Actions 的 `Run workflow` 中填写：
+
+- `upstream_tag`: `v0.1.178`
+- `publish`: `true`
+- `rebuild_current`: `true`
+
+`rebuild_current` 只负责重新构建当前 `magic` 分支，不会重复合并已经包含的上游 tag。
+
 ## 本地同步
 
 在干净的 `magic` 分支运行：
