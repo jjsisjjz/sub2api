@@ -200,10 +200,12 @@ jobs:
           VERSION: ${{ steps.magic_release.outputs.version }}
           UPSTREAM_TAG: ${{ steps.release.outputs.tag }}
         run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           printf '%s\n' "$VERSION" > backend/cmd/server/VERSION
           git add backend/cmd/server/VERSION
           if ! git diff --cached --quiet; then
-            git commit -m "chore(magic): prepare ${VERSION} from ${UPSTREAM_TAG}"
+            git commit -m "chore(magic): prepare ${VERSION} from ${UPSTREAM_TAG} [skip ci]"
           fi
 
       - name: Build Windows package
