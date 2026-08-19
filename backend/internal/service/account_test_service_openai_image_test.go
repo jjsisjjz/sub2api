@@ -18,6 +18,7 @@ func TestAccountTestService_OpenAIImageOAuthHandlesOutputItemDoneFallback(t *tes
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/1/test", nil)
+	c.Request.Header.Set("Session_ID", "image-account-test-session")
 
 	upstream := &httpUpstreamRecorder{
 		resp: &http.Response{
@@ -41,11 +42,16 @@ func TestAccountTestService_OpenAIImageOAuthHandlesOutputItemDoneFallback(t *tes
 		Credentials: map[string]any{
 			"access_token": "token-123",
 		},
+		Extra: map[string]any{
+			codexFingerprintModeExtraKey: string(codexFingerprintRandomMulti),
+			codexFingerprintSeedExtraKey: testCodexFingerprintSeed,
+		},
 	}
 
 	err := svc.testOpenAIImageOAuth(c, context.Background(), account, "gpt-image-2", "draw a cat")
 	require.NoError(t, err)
 	require.NotNil(t, upstream.lastReq)
+	assertCodexFingerprintFlatOutbound(t, account, upstream.lastReq, upstream.lastBody, "image-account-test-session")
 	require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(upstream.lastReq.Context()))
 	require.Contains(t, rec.Body.String(), "Calling Codex /responses image tool")
 	require.Contains(t, rec.Body.String(), "data:image/png;base64,aGVsbG8=")

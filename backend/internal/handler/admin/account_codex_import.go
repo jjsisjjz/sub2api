@@ -226,7 +226,7 @@ func (h *AccountHandler) importCodexSessions(ctx context.Context, req CodexSessi
 			item.Credentials["expires_at"] = credentialExpiresAt.Format(time.RFC3339)
 		}
 		credentials := mergeCodexImportMap(item.Credentials, credentialExtras)
-		extra := mergeCodexImportMap(req.Extra, item.Extra)
+		extra := stripImportedCodexFingerprintSeed(mergeCodexImportMap(req.Extra, item.Extra))
 		for _, warning := range item.WarningTexts {
 			result.Warnings = append(result.Warnings, CodexSessionImportMessage{
 				Index:   entry.Index,
@@ -275,7 +275,7 @@ func (h *AccountHandler) importCodexSessions(ctx context.Context, req CodexSessi
 				autoPauseOnExpired = nil
 			}
 			mergedCredentials := mergeCodexImportCredentials(existing.Credentials, credentials, item)
-			mergedExtra := mergeCodexImportMap(existing.Extra, extra)
+			mergedExtra := stripImportedCodexFingerprintSeed(mergeCodexImportMap(existing.Extra, extra))
 			updateInput := &service.UpdateAccountInput{
 				Credentials:        mergedCredentials,
 				Extra:              mergedExtra,

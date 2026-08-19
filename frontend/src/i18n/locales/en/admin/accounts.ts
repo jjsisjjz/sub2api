@@ -610,11 +610,13 @@ export default {
         codexCLIOnlyAppServerDesc:
           "Effective only when the switch above is on. When enabled, this account also allows third-party clients that embed the Codex engine over the app-server protocol (e.g. Claude Code's codex plugin); they still pass the global engine-fingerprint gate. OR-combined with the global app-server toggle.",
         codexFingerprintMode: 'Codex fingerprint convergence',
-        codexFingerprintModeDesc: 'When multiple users share the same OAuth account, converge device/session identifiers to account-level stable values to reduce upstream-visible device and session count. Off by default (client identifiers pass through as-is); opt in explicitly when needed. Some accounts reported quota shrinkage after enabling convergence, so choose based on your own measurements.',
-        codexFingerprintOff: 'Off (passthrough, default)',
+        codexFingerprintModeDesc: 'Account-scoped identity policy for OpenAI OAuth. Single-session random is the default: all four dimensions use separate stable account domains. Choose multi-session concurrency when running simultaneous windows or sharing an account; installation/session stay stable while thread/window are isolated per client session. Only explicit off preserves raw client identifiers.',
+        codexFingerprintOff: 'Off (passthrough)',
         codexFingerprintDevice: 'Device only',
         codexFingerprintSession: 'Device + Session',
         codexFingerprintFull: 'Full convergence',
+        codexFingerprintRandom: 'Independent random (single session)',
+        codexFingerprintRandomMulti: 'Independent random (multi-session concurrency)',
         codexImageTool: 'Codex image bridge policy',
         codexImageToolDesc:
           'Controls the hosted image_generation bridge and client-declared image tools on Codex /responses text requests. Hosted auto-injection applies only to non-Responses Lite requests. Account policy takes precedence over channel and global settings; standalone image-generation endpoints are unaffected.',

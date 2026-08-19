@@ -59,6 +59,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
 	beginUpstreamResponseModelObservation(c)
+	stageCodexFingerprintIDs(c, nil)
 
 	restrictionResult := s.detectCodexClientRestriction(c, account, body)
 	logCodexCLIOnlyDetection(ctx, c, account, getAPIKeyIDFromContext(c), restrictionResult, body)
@@ -222,6 +223,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		} else if promptCacheKey != "" {
 			reqBody["prompt_cache_key"] = promptCacheKey
 		}
+		applyAndStageCodexFingerprint(c, account, reqBody)
 		responsesBody, err = json.Marshal(reqBody)
 		if err != nil {
 			return nil, fmt.Errorf("remarshal after codex transform: %w", err)
@@ -274,6 +276,10 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		apiKeyID := getAPIKeyIDFromContext(c)
 		upstreamReq.Header.Set("session_id", generateSessionUUID(isolateOpenAISessionID(apiKeyID, promptCacheKey)))
 	}
+	// The compatibility bridge applies its legacy prompt-cache session after
+	// buildUpstreamRequest. Re-apply the staged OAuth Codex IDs last so the
+	// request headers stay aligned with the transformed body metadata.
+	applyStagedCodexFingerprintHeaders(c, account, upstreamReq.Header)
 
 	// 7. Send request
 	proxyURL := ""

@@ -1706,6 +1706,10 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 	if err != nil {
 		return nil, err
 	}
+	responsesBody, _, err = applyCodexFingerprintClientMetadataRaw(responsesBody, stagedCodexFingerprintIDs(c, account))
+	if err != nil {
+		return nil, err
+	}
 	upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, responsesBody, token, true, parsed.StickySessionSeed(), false)
 	if err != nil {
 		return nil, err

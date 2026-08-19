@@ -34,13 +34,18 @@ func TestEnsureCodexReasoningInclude(t *testing.T) {
 // applyCodexClientMetadata：用账号真实 device_id 注入 installation 标识，幂等、不覆盖既有项、不伪造。
 func TestApplyCodexClientMetadata(t *testing.T) {
 	// 仅 OpenAI OAuth 账号才有 device_id（GetOpenAIDeviceID 的门控）。
-	acc := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{"openai_device_id": "dev-xyz"}}
+	acc := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{
+		codexFingerprintModeExtraKey: codexFingerprintRandom,
+		codexFingerprintSeedExtraKey: testCodexFingerprintSeed,
+		"openai_device_id":           "dev-xyz",
+	}}
+	wantInstallationID := resolveRandomCodexFingerprintInstallationID(testCodexFingerprintSeed)
 
 	body := map[string]any{}
 	require.True(t, applyCodexClientMetadata(body, acc))
 	cm, ok := body["client_metadata"].(map[string]any)
 	require.True(t, ok)
-	require.Equal(t, "dev-xyz", cm["x-codex-installation-id"])
+	require.Equal(t, wantInstallationID, cm["x-codex-installation-id"])
 	// 幂等
 	require.False(t, applyCodexClientMetadata(body, acc))
 
@@ -55,7 +60,7 @@ func TestApplyCodexClientMetadata(t *testing.T) {
 	require.True(t, applyCodexClientMetadata(body3, acc))
 	cm3, _ := body3["client_metadata"].(map[string]any)
 	require.Equal(t, "t", cm3["x-codex-turn-metadata"])
-	require.Equal(t, "dev-xyz", cm3["x-codex-installation-id"])
+	require.Equal(t, wantInstallationID, cm3["x-codex-installation-id"])
 }
 
 // defaultCodexSynthInstructions：按模型选用真实 Codex base prompt。

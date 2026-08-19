@@ -362,6 +362,8 @@ func (c *CodexQuotaOverdraftCoordinator) runProbeAttempt(ctx context.Context, ac
 		"stream":       true,
 		"store":        false,
 	}
+	fpIDs := resolveCodexFingerprintIDsFromRequest(account, nil)
+	applyCodexFingerprintClientMetadata(payload, fpIDs)
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		result.Status, result.ReasonCode = "inconclusive", "experimental_probe_unavailable"
@@ -415,6 +417,7 @@ func (c *CodexQuotaOverdraftCoordinator) runProbeAttempt(ctx context.Context, ac
 	}
 	setOpenAIChatGPTAccountHeaders(req.Header, account)
 	enforceCodexIdentityHeadersWithUA(req.Header, account.GetOpenAIUserAgent())
+	applyCodexFingerprintHeaders(req.Header, fpIDs)
 	account.ApplyHeaderOverrides(req.Header)
 
 	proxyURL := ""

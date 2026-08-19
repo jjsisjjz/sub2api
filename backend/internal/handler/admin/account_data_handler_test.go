@@ -317,3 +317,40 @@ func TestImportDataReusesProxyAndSkipsDefaultGroup(t *testing.T) {
 	require.Len(t, adminSvc.createdAccounts, 1)
 	require.True(t, adminSvc.createdAccounts[0].SkipDefaultGroupBind)
 }
+
+func TestImportDataStripsManagedCodexFingerprintSeed(t *testing.T) {
+	router, adminSvc := setupAccountDataRouter()
+	legacySeed := "22222222-2222-4222-8222-222222222222"
+	payload := map[string]any{
+		"data": map[string]any{
+			"type":    dataType,
+			"version": dataVersion,
+			"proxies": []any{},
+			"accounts": []map[string]any{{
+				"name":        "codex-import",
+				"platform":    service.PlatformOpenAI,
+				"type":        service.AccountTypeOAuth,
+				"credentials": map[string]any{"access_token": "token"},
+				"extra": map[string]any{
+					"codex_fingerprint_mode":      "random",
+					codexFingerprintSeedImportKey: legacySeed,
+				},
+				"concurrency": 1,
+				"priority":    50,
+			}},
+		},
+		"skip_default_group_bind": true,
+	}
+
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/data", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Len(t, adminSvc.createdAccounts, 1)
+	require.Equal(t, "random", adminSvc.createdAccounts[0].Extra["codex_fingerprint_mode"])
+	require.NotContains(t, adminSvc.createdAccounts[0].Extra, codexFingerprintSeedImportKey)
+}

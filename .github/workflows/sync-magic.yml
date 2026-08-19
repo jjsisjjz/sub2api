@@ -1,6 +1,9 @@
 name: Sync magic branch
 
 on:
+  push:
+    branches:
+      - magic
   workflow_dispatch:
     inputs:
       upstream_tag:
@@ -44,6 +47,7 @@ jobs:
 
       - name: Fetch upstream tags
         run: |
+          git fetch origin --tags --prune
           git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git" || true
           git fetch upstream --tags --prune
 
@@ -65,11 +69,17 @@ jobs:
         env:
           UPSTREAM_TAG: ${{ steps.release.outputs.tag }}
           REBUILD_CURRENT: ${{ github.event.inputs.rebuild_current || 'false' }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          if [ "$REBUILD_CURRENT" = "true" ]; then
+          merge=false
+          if ! git merge-base --is-ancestor "${UPSTREAM_TAG}^{commit}" HEAD; then
+            merge=true
+          fi
+
+          if [ "$REBUILD_CURRENT" = "true" ] || [ "$EVENT_NAME" = "push" ]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "merge=false" >> "$GITHUB_OUTPUT"
-          elif git merge-base --is-ancestor "${UPSTREAM_TAG}^{commit}" HEAD; then
+            echo "merge=$merge" >> "$GITHUB_OUTPUT"
+          elif [ "$merge" = "false" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "merge=false" >> "$GITHUB_OUTPUT"
           else
@@ -107,6 +117,39 @@ jobs:
       - name: Stop on merge conflicts
         if: steps.merge.outputs.conflict == 'true'
         run: exit 1
+
+      - name: Select magic release version
+        if: steps.detect.outputs.changed == 'true'
+        id: magic_release
+        env:
+          UPSTREAM_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          latest_tag="$(git tag --list 'magic-v[0-9]*' --sort=-v:refname | head -n 1)"
+          latest_version="${latest_tag#magic-v}"
+
+          if ! [[ "$UPSTREAM_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid upstream version: $UPSTREAM_VERSION" >&2
+            exit 1
+          fi
+
+          version="$UPSTREAM_VERSION"
+          if [ -n "$latest_tag" ]; then
+            if ! [[ "$latest_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Invalid latest magic version: $latest_version" >&2
+              exit 1
+            fi
+
+            highest="$(printf '%s\n%s\n' "$UPSTREAM_VERSION" "$latest_version" | sort -V | tail -n 1)"
+            if [ "$UPSTREAM_VERSION" = "$latest_version" ] || [ "$highest" = "$latest_version" ]; then
+              IFS=. read -r major minor patch <<< "$latest_version"
+              version="${major}.${minor}.$((10#$patch + 1))"
+            fi
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=magic-v$version" >> "$GITHUB_OUTPUT"
+          echo "upstream_version=$UPSTREAM_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Selected magic-v$version from upstream v$UPSTREAM_VERSION (previous: ${latest_tag:-none})"
 
       - name: Setup pnpm
         if: steps.detect.outputs.changed == 'true'
@@ -154,19 +197,19 @@ jobs:
       - name: Update version and commit
         if: steps.detect.outputs.changed == 'true'
         env:
-          VERSION: ${{ steps.release.outputs.version }}
+          VERSION: ${{ steps.magic_release.outputs.version }}
           UPSTREAM_TAG: ${{ steps.release.outputs.tag }}
         run: |
           printf '%s\n' "$VERSION" > backend/cmd/server/VERSION
           git add backend/cmd/server/VERSION
           if ! git diff --cached --quiet; then
-            git commit -m "chore(magic): sync upstream ${UPSTREAM_TAG}"
+            git commit -m "chore(magic): prepare ${VERSION} from ${UPSTREAM_TAG}"
           fi
 
       - name: Build Windows package
         if: steps.detect.outputs.changed == 'true'
         env:
-          VERSION: ${{ steps.release.outputs.version }}
+          VERSION: ${{ steps.magic_release.outputs.version }}
         run: |
           mkdir -p release-magic/package
           commit="$(git rev-parse --short HEAD)"
@@ -199,20 +242,22 @@ jobs:
         if: steps.detect.outputs.changed == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: sub2api-magic-${{ steps.release.outputs.version }}-windows-amd64
+          name: sub2api-magic-${{ steps.magic_release.outputs.version }}-windows-amd64
           path: |
-            release-magic/sub2api-magic-${{ steps.release.outputs.version }}-windows-amd64.zip
-            release-magic/sub2api_${{ steps.release.outputs.version }}_windows_amd64.zip
+            release-magic/sub2api-magic-${{ steps.magic_release.outputs.version }}-windows-amd64.zip
+            release-magic/sub2api_${{ steps.magic_release.outputs.version }}_windows_amd64.zip
             release-magic/checksums.txt
 
       - name: Publish magic release
         if: >-
           steps.detect.outputs.changed == 'true' &&
-          (github.event_name == 'schedule' || github.event.inputs.publish == 'true')
+          (github.event_name == 'schedule' ||
+           github.event_name == 'push' ||
+           github.event.inputs.publish == 'true')
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          VERSION: ${{ steps.release.outputs.version }}
+          VERSION: ${{ steps.magic_release.outputs.version }}
           UPSTREAM_TAG: ${{ steps.release.outputs.tag }}
         run: |
           release_tag="magic-v${VERSION}"
@@ -220,7 +265,7 @@ jobs:
           updater_package="release-magic/sub2api_${VERSION}_windows_amd64.zip"
           checksums="release-magic/checksums.txt"
           title="Sub2API magic ${VERSION}"
-          notes="Automated magic build based on upstream ${UPSTREAM_TAG}."
+          notes="Automated magic ${VERSION} build based on upstream ${UPSTREAM_TAG}."
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if git rev-parse --verify "refs/tags/${release_tag}" >/dev/null 2>&1; then

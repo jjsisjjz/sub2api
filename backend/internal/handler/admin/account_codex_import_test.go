@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseCodexSessionImportEntriesSupportsRawTokenJSONAndArray(t *testing.T) {
@@ -881,6 +882,31 @@ func TestImportCodexSessionsWithRefreshTokenKeepsExistingDedup(t *testing.T) {
 	if got := svc.updatedAccounts[0].input.Credentials["refresh_token"]; got != "refresh-new" {
 		t.Fatalf("updated refresh_token = %v, want refresh-new", got)
 	}
+}
+
+func TestImportCodexSessionsStripsManagedFingerprintSeed(t *testing.T) {
+	svc := newCodexImportMemoryAdminService(nil)
+	handler := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	legacySeed := "22222222-2222-4222-8222-222222222222"
+	req := CodexSessionImportRequest{
+		SkipDefaultGroupBind: boolPtr(true),
+		Extra: map[string]any{
+			"codex_fingerprint_mode":      "random",
+			codexFingerprintSeedImportKey: legacySeed,
+		},
+	}
+	entries := []codexImportEntry{{
+		Index: 1,
+		Value: buildCodexRefreshImportValue(t, "workspace-seed", "user-seed", "refresh-seed"),
+	}}
+
+	result, err := handler.importCodexSessions(context.Background(), req, entries)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Created)
+	require.Zero(t, result.Failed)
+	require.Len(t, svc.createdAccounts, 1)
+	require.Equal(t, "random", svc.createdAccounts[0].Extra["codex_fingerprint_mode"])
+	require.NotContains(t, svc.createdAccounts[0].Extra, codexFingerprintSeedImportKey)
 }
 
 type codexImportMemoryAdminService struct {

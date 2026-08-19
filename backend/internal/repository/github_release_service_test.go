@@ -3,7 +3,6 @@ package repository
 import (
 	"bytes"
 	"context"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -106,31 +106,72 @@ func TestGitHubReleaseClientRedirectAuthorization(t *testing.T) {
 	}
 }
 
-func TestGitHubReleaseClientDoesNotAuthorizeDownloads(t *testing.T) {
+func TestGitHubReleaseClientAssetRequestAuthorization(t *testing.T) {
 	client := newTestGitHubReleaseClient()
 	client.updateGitHubToken = "update-secret"
 
-	var headers []http.Header
-	transport := githubReleaseRoundTripFunc(func(req *http.Request) (*http.Response, error) {
-		headers = append(headers, req.Header.Clone())
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader("checksum")),
-			Request:    req,
-		}, nil
-	})
-	client.httpClient.Transport = transport
-	client.downloadHTTPClient.Transport = transport
-
-	dest := filepath.Join(t.TempDir(), "asset")
-	require.NoError(t, client.DownloadFile(context.Background(), "https://objects.githubusercontent.com/asset", dest, 100))
-	_, err := client.FetchChecksumFile(context.Background(), "https://github.com/test/repo/releases/download/v1/checksums.txt")
-	require.NoError(t, err)
-	require.Len(t, headers, 2)
-	for _, header := range headers {
-		require.Empty(t, header.Get("Authorization"))
+	tests := []struct {
+		name       string
+		url        string
+		wantAuth   string
+		wantAccept string
+	}{
+		{
+			name:       "private API asset",
+			url:        "https://api.github.com/repos/test/repo/releases/assets/123",
+			wantAuth:   "Bearer update-secret",
+			wantAccept: "application/octet-stream",
+		},
+		{name: "public browser asset", url: "https://github.com/test/repo/releases/download/v1/app.zip"},
+		{name: "redirected asset storage", url: "https://objects.githubusercontent.com/asset"},
+		{name: "untrusted API lookalike", url: "https://sub.api.github.com/repos/test/repo/releases/assets/123"},
 	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := client.newAssetRequest(context.Background(), tt.url)
+			require.NoError(t, err)
+			require.Equal(t, tt.wantAuth, req.Header.Get("Authorization"))
+			require.Equal(t, tt.wantAccept, req.Header.Get("Accept"))
+			require.Equal(t, "Sub2API-Updater", req.Header.Get("User-Agent"))
+		})
+	}
+}
+
+func TestGitHubReleaseClientPrefersAuthenticatedAssetURLs(t *testing.T) {
+	release := &service.GitHubRelease{
+		Assets: []service.GitHubAsset{
+			{
+				APIURL:             "https://api.github.com/repos/test/repo/releases/assets/123",
+				BrowserDownloadURL: "https://github.com/test/repo/releases/download/v1/app.zip",
+			},
+			{
+				APIURL:             "https://example.com/not-github",
+				BrowserDownloadURL: "https://github.com/test/repo/releases/download/v1/checksums.txt",
+			},
+		},
+	}
+
+	client := newTestGitHubReleaseClient()
+	client.updateGitHubToken = "update-secret"
+	client.preferAuthenticatedAssetURLs(release)
+
+	require.Equal(t, "https://api.github.com/repos/test/repo/releases/assets/123", release.Assets[0].BrowserDownloadURL)
+	require.Equal(t, "https://github.com/test/repo/releases/download/v1/checksums.txt", release.Assets[1].BrowserDownloadURL)
+}
+
+func TestGitHubReleaseClientKeepsPublicAssetURLsWithoutToken(t *testing.T) {
+	release := &service.GitHubRelease{
+		Assets: []service.GitHubAsset{{
+			APIURL:             "https://api.github.com/repos/test/repo/releases/assets/123",
+			BrowserDownloadURL: "https://github.com/test/repo/releases/download/v1/app.zip",
+		}},
+	}
+
+	client := newTestGitHubReleaseClient()
+	client.preferAuthenticatedAssetURLs(release)
+
+	require.Equal(t, "https://github.com/test/repo/releases/download/v1/app.zip", release.Assets[0].BrowserDownloadURL)
 }
 
 type githubReleaseRoundTripFunc func(*http.Request) (*http.Response, error)
@@ -309,6 +350,7 @@ func (s *GitHubReleaseServiceSuite) TestFetchLatestRelease_Success() {
 		"html_url": "https://github.com/test/repo/releases/v1.0.0",
 		"assets": [
 			{
+				"url": "https://api.github.com/repos/test/repo/releases/assets/123",
 				"name": "app-linux-amd64.tar.gz",
 				"browser_download_url": "https://github.com/test/repo/releases/download/v1.0.0/app-linux-amd64.tar.gz"
 			}
@@ -337,6 +379,7 @@ func (s *GitHubReleaseServiceSuite) TestFetchLatestRelease_Success() {
 	require.Equal(s.T(), "v1.0.0", release.TagName)
 	require.Equal(s.T(), "Release 1.0.0", release.Name)
 	require.Len(s.T(), release.Assets, 1)
+	require.Equal(s.T(), "https://api.github.com/repos/test/repo/releases/assets/123", release.Assets[0].APIURL)
 	require.Equal(s.T(), "app-linux-amd64.tar.gz", release.Assets[0].Name)
 }
 

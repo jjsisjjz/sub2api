@@ -755,6 +755,10 @@ func TestOpenAIGatewayServiceForwardImages_OAuthPassesNAndReturnsAllImages(t *te
 			"access_token":       "token-123",
 			"chatgpt_account_id": "acct-123",
 		},
+		Extra: map[string]any{
+			codexFingerprintModeExtraKey: string(codexFingerprintRandomMulti),
+			codexFingerprintSeedExtraKey: testCodexFingerprintSeed,
+		},
 	}
 
 	result, err := svc.ForwardImages(context.Background(), c, account, body, parsed, "")
@@ -775,6 +779,7 @@ func TestOpenAIGatewayServiceForwardImages_OAuthPassesNAndReturnsAllImages(t *te
 	require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
 	require.Equal(t, "acct-123", upstream.lastReq.Header.Get("chatgpt-account-id"))
 	require.Empty(t, upstream.lastReq.Header.Get("OpenAI-Beta"))
+	assertCodexFingerprintFlatOutbound(t, account, upstream.lastReq, upstream.lastBody, parsed.StickySessionSeed())
 
 	require.Equal(t, openAIImagesResponsesMainModel, gjson.GetBytes(upstream.lastBody, "model").String())
 	require.True(t, gjson.GetBytes(upstream.lastBody, "stream").Bool())

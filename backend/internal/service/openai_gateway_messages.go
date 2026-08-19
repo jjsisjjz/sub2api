@@ -35,6 +35,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
 	beginUpstreamResponseModelObservation(c)
+	stageCodexFingerprintIDs(c, nil)
 
 	// 入口分流（国产供应商 Anthropic 协议）：上游为供应商原生 Anthropic 端点时，
 	// /v1/messages 请求零转换直通（仅模型名映射 + 少量 body 清洗），完整保留
@@ -228,6 +229,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		if shouldAutoInjectPromptCacheKeyForCompat(upstreamModel) {
 			compatTurnState = s.getOpenAICompatSessionTurnState(ctx, c, account, promptCacheKey)
 		}
+		applyAndStageCodexFingerprint(c, account, reqBody)
 		// OAuth codex transform forces stream=true upstream, so always use
 		// the streaming response handler regardless of what the client asked.
 		isStream = true
@@ -347,6 +349,11 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	if account.Type == AccountTypeOAuth && promptCacheKey != "" && strings.TrimSpace(c.GetHeader("conversation_id")) == "" {
 		upstreamReq.Header.Del("conversation_id")
 	}
+	// The Messages bridge restores its compatibility session and identity after
+	// buildUpstreamRequest. Apply the staged OAuth Codex IDs at the final header
+	// boundary so those compatibility writes cannot desynchronize headers from
+	// client_metadata.
+	applyStagedCodexFingerprintHeaders(c, account, upstreamReq.Header)
 	if compatTurnState != "" && upstreamReq.Header.Get("x-codex-turn-state") == "" {
 		upstreamReq.Header.Set("x-codex-turn-state", compatTurnState)
 	}

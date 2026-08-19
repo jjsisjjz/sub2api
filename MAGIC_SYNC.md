@@ -47,6 +47,26 @@ git push -u origin magic
 
 `rebuild_current` 只负责重新构建当前 `magic` 分支，不会重复合并已经包含的上游 tag。
 
+推送 `magic` 分支也会自动触发测试、构建和发布。魔改 Release 使用独立递增的三段版本号：当上游版本没有高于现有魔改版本时，自动将现有魔改版本的 patch 加一。因此同一上游版本上的修订也能被面板识别为更新，不会覆盖同版本 Release。
+
+## 私有仓库更新
+
+仓库设为 Private 后，源码和 Release 资产都会变为不可见。运行中的 Sub2API 必须设置 `UPDATE_GITHUB_TOKEN` 才能查询和下载私有 Release：
+
+```powershell
+$env:UPDATE_GITHUB_TOKEN = 'github_pat_xxx'
+.\run.ps1
+```
+
+使用 fine-grained personal access token，只授予本仓库只读 `Contents` 权限。Token 仅发送到 `api.github.com`，跳转到 GitHub 资产存储前会移除认证头；不要把 Token 提交到仓库或打进发布包。
+
+从旧版切换到私有更新时必须按此顺序操作：
+
+1. 保持仓库公开，发布并安装首个包含私有下载支持的 bootstrap 版本。
+2. 在部署环境设置 `UPDATE_GITHUB_TOKEN` 并重启服务。
+3. 将 GitHub 仓库切换为 Private。
+4. 在版本面板强制刷新，确认仍能读取最新 Release。
+
 ## 本地同步
 
 在干净的 `magic` 分支运行：

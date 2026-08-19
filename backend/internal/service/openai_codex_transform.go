@@ -1282,38 +1282,47 @@ func ensureCodexReasoningInclude(reqBody map[string]any) bool {
 // 加法式、幂等：仅在账号存在 device_id 且该键缺失时注入，绝不覆盖既有 client_metadata
 // （如 turn metadata），也不伪造——无 device_id 时不写入。
 func applyCodexClientMetadata(reqBody map[string]any, account *Account) bool {
-	if account == nil {
+	if reqBody == nil || account == nil {
 		return false
 	}
-	deviceID := strings.TrimSpace(account.GetOpenAIDeviceID())
-	if deviceID == "" {
+	mode := account.GetCodexFingerprintMode()
+	if mode == codexFingerprintOff {
+		return false
+	}
+	seed, ok := codexFingerprintSeed(account.Extra)
+	if !ok {
+		return false
+	}
+	installationID := resolveCodexFingerprintInstallationID(account, mode, seed)
+	if installationID == "" {
 		return false
 	}
 	const key = "x-codex-installation-id"
 	switch existing := reqBody["client_metadata"].(type) {
 	case map[string]any:
-		if v, ok := existing[key].(string); ok && strings.TrimSpace(v) != "" {
+		if v, ok := existing[key].(string); ok && strings.TrimSpace(v) == installationID {
 			return false
 		}
-		existing[key] = deviceID
+		existing[key] = installationID
 		reqBody["client_metadata"] = existing
 		return true
 	case map[string]string:
-		if strings.TrimSpace(existing[key]) != "" {
+		if strings.TrimSpace(existing[key]) == installationID {
 			return false
 		}
 		next := make(map[string]any, len(existing)+1)
 		for k, v := range existing {
 			next[k] = v
 		}
-		next[key] = deviceID
+		next[key] = installationID
 		reqBody["client_metadata"] = next
 		return true
 	case nil:
-		reqBody["client_metadata"] = map[string]any{key: deviceID}
+		reqBody["client_metadata"] = map[string]any{key: installationID}
 		return true
 	default:
-		return false
+		reqBody["client_metadata"] = map[string]any{key: installationID}
+		return true
 	}
 }
 

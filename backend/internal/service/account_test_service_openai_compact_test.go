@@ -82,6 +82,37 @@ func TestAccountTestService_TestAccountConnection_OpenAICompactOAuthSuccessPersi
 	require.Contains(t, rec.Body.String(), `"type":"test_complete"`)
 }
 
+func TestAccountTestService_OpenAICompactRandomMultiFingerprintParity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	account := &Account{
+		ID:          601,
+		Name:        "openai-oauth-random-multi",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token":       "oauth-token",
+			"chatgpt_account_id": "chatgpt-acc",
+		},
+		Extra: map[string]any{
+			codexFingerprintModeExtraKey: string(codexFingerprintRandomMulti),
+			codexFingerprintSeedExtraKey: testCodexFingerprintSeed,
+		},
+	}
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(compactProbeSSESuccessBody)),
+	}}
+	svc := &AccountTestService{httpUpstream: upstream}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/601/test", bytes.NewReader(nil))
+
+	require.NoError(t, svc.testOpenAICompactConnection(c, account, "gpt-5.4"))
+	assertCodexFingerprintFlatOutbound(t, account, upstream.lastReq, upstream.lastBody, compactProbeSessionID(account.ID))
+}
+
 func TestAccountTestService_TestAccountConnection_OpenAICompactOAuth404MarksUnsupported(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -283,7 +314,7 @@ func TestAccountTestService_TestAccountConnection_OpenAICompactProbeIdentityMatc
 			"access_token":       "oauth-token",
 			"chatgpt_account_id": "chatgpt-acc",
 		},
-		// 收敛是显式 opt-in（#5610），这里显式开启以验证探测身份与真实流量同构。
+		// 显式使用 session 兼容模式，验证探测身份与真实流量同构。
 		Extra: map[string]any{
 			"codex_fingerprint_mode":     "session",
 			codexFingerprintSeedExtraKey: testCodexFingerprintSeed,

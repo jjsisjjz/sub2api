@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -18,11 +19,21 @@ import (
 )
 
 const (
-	dataType       = "sub2api-data"
-	legacyDataType = "sub2api-bundle"
-	dataVersion    = 1
-	dataPageCap    = 1000
+	dataType                      = "sub2api-data"
+	legacyDataType                = "sub2api-bundle"
+	dataVersion                   = 1
+	dataPageCap                   = 1000
+	codexFingerprintSeedImportKey = "codex_fingerprint_seed"
 )
+
+func stripImportedCodexFingerprintSeed(extra map[string]any) map[string]any {
+	if extra == nil {
+		return nil
+	}
+	sanitized := maps.Clone(extra)
+	delete(sanitized, codexFingerprintSeedImportKey)
+	return sanitized
+}
 
 type DataPayload struct {
 	Type       string        `json:"type,omitempty"`
@@ -435,7 +446,7 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 			Platform:             item.Platform,
 			Type:                 item.Type,
 			Credentials:          item.Credentials,
-			Extra:                item.Extra,
+			Extra:                stripImportedCodexFingerprintSeed(item.Extra),
 			ProxyID:              proxyID,
 			Concurrency:          item.Concurrency,
 			Priority:             item.Priority,

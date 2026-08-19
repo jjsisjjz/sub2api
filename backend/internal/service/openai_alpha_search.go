@@ -35,6 +35,7 @@ func (s *OpenAIGatewayService) ForwardAlphaSearch(ctx context.Context, c *gin.Co
 	if modelResult.Type != gjson.String || requestedModel == "" {
 		return nil, fmt.Errorf("model is required")
 	}
+	fingerprintSessionFallback := extractCodexFingerprintRawBodySessionID(body)
 
 	upstreamModel := normalizeOpenAIModelForUpstream(account, account.GetMappedModel(requestedModel))
 	if upstreamModel != "" && upstreamModel != requestedModel {
@@ -64,7 +65,7 @@ func (s *OpenAIGatewayService) ForwardAlphaSearch(ctx context.Context, c *gin.Co
 	// 拒绝为 no_matching_rule。对 PAT 账号使用等价的 hosted web_search
 	// Responses 路径兜底，避免把可用账号误判为搜索不可用。
 	if account.IsOpenAIPersonalAccessToken() {
-		return s.forwardAlphaSearchViaResponsesWebSearch(ctx, c, account, body, token, proxyURL, requestedModel, upstreamModel)
+		return s.forwardAlphaSearchViaResponsesWebSearch(ctx, c, account, body, fingerprintSessionFallback, token, proxyURL, requestedModel, upstreamModel)
 	}
 
 	req, err := s.buildOpenAIAlphaSearchRequest(ctx, c, account, body, token)
@@ -134,6 +135,7 @@ func (s *OpenAIGatewayService) forwardAlphaSearchViaResponsesWebSearch(
 	c *gin.Context,
 	account *Account,
 	alphaBody []byte,
+	fingerprintSessionFallback string,
 	token string,
 	proxyURL string,
 	requestedModel string,
@@ -146,7 +148,7 @@ func (s *OpenAIGatewayService) forwardAlphaSearchViaResponsesWebSearch(
 	if err != nil {
 		return nil, err
 	}
-	req, err := s.buildOpenAIAlphaSearchResponsesWebSearchRequest(ctx, c, account, alphaBody, responsesBody, token)
+	req, err := s.buildOpenAIAlphaSearchResponsesWebSearchRequest(ctx, c, account, alphaBody, responsesBody, fingerprintSessionFallback, token)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +213,13 @@ func (s *OpenAIGatewayService) forwardAlphaSearchViaResponsesWebSearch(
 	}, nil
 }
 
-func (s *OpenAIGatewayService) buildOpenAIAlphaSearchResponsesWebSearchRequest(ctx context.Context, c *gin.Context, account *Account, alphaBody []byte, body []byte, token string) (*http.Request, error) {
+func (s *OpenAIGatewayService) buildOpenAIAlphaSearchResponsesWebSearchRequest(ctx context.Context, c *gin.Context, account *Account, alphaBody []byte, body []byte, fingerprintSessionFallback string, token string) (*http.Request, error) {
+	fpIDs := resolveCodexFingerprintIDsFromRequestWithFallback(account, codexFingerprintInboundHeaders(c), fingerprintSessionFallback)
+	var err error
+	body, _, err = applyCodexFingerprintClientMetadataRaw(body, fpIDs)
+	if err != nil {
+		return nil, fmt.Errorf("apply alpha search responses fingerprint: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatgptCodexURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -266,6 +274,7 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchResponsesWebSearchRequest(c
 		req.Header.Set("Conversation_ID", isolated)
 	}
 	enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account))
+	applyCodexFingerprintHeaders(req.Header, fpIDs)
 	account.ApplyHeaderOverrides(req.Header)
 	return req, nil
 }

@@ -848,50 +848,12 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 	if accessToken == "" && !account.IsOpenAIAgentIdentity() {
 		return nil, fmt.Errorf("no access token available")
 	}
-	modelID := openaipkg.CodexUsageProbeModel
-	payload := createOpenAITestPayload(modelID, true)
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshal openai probe payload: %w", err)
-	}
-
 	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, chatgptCodexURL, bytes.NewReader(payloadBytes))
+	req, err := s.buildOpenAICodexSnapshotProbeRequest(reqCtx, account, accessToken)
 	if err != nil {
-		return nil, fmt.Errorf("create openai probe request: %w", err)
+		return nil, err
 	}
-	req.Host = "chatgpt.com"
-	req.Header.Set("Content-Type", "application/json")
-	if account.IsOpenAIAgentIdentity() {
-		authHeaders, authErr := buildAgentIdentityAuthenticationHeaders(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, account)
-		if authErr != nil {
-			return nil, fmt.Errorf("build Agent Identity authentication: %w", authErr)
-		}
-		for key, values := range authHeaders {
-			for _, value := range values {
-				req.Header.Add(key, value)
-			}
-		}
-	} else {
-		req.Header.Set("Authorization", "Bearer "+accessToken)
-	}
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("OpenAI-Beta", "responses=experimental")
-	canonical := resolveCodexOutboundIdentity("")
-	req.Header.Set("Originator", canonical.originator)
-	req.Header.Set("Version", canonical.version)
-	req.Header.Set("User-Agent", canonical.userAgent)
-	if s.identityCache != nil {
-		if fp, fpErr := s.identityCache.GetFingerprint(reqCtx, account.ID); fpErr == nil && fp != nil && strings.TrimSpace(fp.UserAgent) != "" {
-			req.Header.Set("User-Agent", strings.TrimSpace(fp.UserAgent))
-		}
-	}
-	// 与真实转发一致：账号级自定义 UA 同样作为管理员显式配置传入。
-	// 上面写进 header 的指纹缓存 UA 只在强制统一被关闭时才参与配对（保持回滚后的历史语义）；
-	// 强制统一开启时客户端身份不参与构造，探针与真实转发用同一套规范身份出站。
-	enforceCodexIdentityHeadersWithUA(req.Header, account.GetOpenAIUserAgent())
-	setOpenAIChatGPTAccountHeaders(req.Header, account)
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
@@ -920,6 +882,54 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 		return updates, nil
 	}
 	return nil, nil
+}
+
+func (s *AccountUsageService) buildOpenAICodexSnapshotProbeRequest(ctx context.Context, account *Account, accessToken string) (*http.Request, error) {
+	modelID := openaipkg.CodexUsageProbeModel
+	payload := createOpenAITestPayload(modelID, true)
+	fpIDs := resolveCodexFingerprintIDsFromRequest(account, nil)
+	applyCodexFingerprintClientMetadata(payload, fpIDs)
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal openai probe payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatgptCodexURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return nil, fmt.Errorf("create openai probe request: %w", err)
+	}
+	req.Host = "chatgpt.com"
+	req.Header.Set("Content-Type", "application/json")
+	if account.IsOpenAIAgentIdentity() {
+		authHeaders, authErr := buildAgentIdentityAuthenticationHeaders(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, account)
+		if authErr != nil {
+			return nil, fmt.Errorf("build Agent Identity authentication: %w", authErr)
+		}
+		for key, values := range authHeaders {
+			for _, value := range values {
+				req.Header.Add(key, value)
+			}
+		}
+	} else {
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("OpenAI-Beta", "responses=experimental")
+	canonical := resolveCodexOutboundIdentity("")
+	req.Header.Set("Originator", canonical.originator)
+	req.Header.Set("Version", canonical.version)
+	req.Header.Set("User-Agent", canonical.userAgent)
+	if s.identityCache != nil {
+		if fp, fpErr := s.identityCache.GetFingerprint(ctx, account.ID); fpErr == nil && fp != nil && strings.TrimSpace(fp.UserAgent) != "" {
+			req.Header.Set("User-Agent", strings.TrimSpace(fp.UserAgent))
+		}
+	}
+	// 与真实转发一致：账号级自定义 UA 同样作为管理员显式配置传入。
+	// 指纹缓存 UA 仅在强制统一关闭时参与配对；开启时探针与真实转发使用同一规范身份。
+	enforceCodexIdentityHeadersWithUA(req.Header, account.GetOpenAIUserAgent())
+	setOpenAIChatGPTAccountHeaders(req.Header, account)
+	applyCodexFingerprintHeaders(req.Header, fpIDs)
+	return req, nil
 }
 
 func (s *AccountUsageService) persistOpenAICodexProbeSnapshot(accountID int64, updates map[string]any) {

@@ -556,6 +556,7 @@ func (s *OpenAIGatewayService) ForwardImages(
 	parsed *OpenAIImagesRequest,
 	channelMappedModel string,
 ) (*OpenAIForwardResult, error) {
+	stageCodexFingerprintIDs(c, nil)
 	if parsed == nil {
 		return nil, fmt.Errorf("parsed images request is required")
 	}
@@ -563,6 +564,7 @@ func (s *OpenAIGatewayService) ForwardImages(
 	case AccountTypeAPIKey:
 		return s.forwardOpenAIImagesAPIKey(ctx, c, account, body, parsed, channelMappedModel)
 	case AccountTypeOAuth:
+		stageCodexFingerprintIDs(c, resolveCodexFingerprintIDsFromRequestWithFallback(account, codexFingerprintInboundHeaders(c), parsed.StickySessionSeed()))
 		return s.forwardOpenAIImagesOAuth(ctx, c, account, parsed, channelMappedModel)
 	default:
 		return nil, fmt.Errorf("unsupported account type: %s", account.Type)

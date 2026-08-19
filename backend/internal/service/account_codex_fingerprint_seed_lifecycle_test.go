@@ -37,6 +37,39 @@ func TestAdminCreateAccountStripsUserSeedAndCreatesFreshSeedWhenEnabled(t *testi
 	require.Equal(t, "session", created.Extra[codexFingerprintModeExtraKey])
 }
 
+func TestAdminCreateAccountsFromSameImportedSeedMintDistinctSeeds(t *testing.T) {
+	repo := &upstreamBillingProbeAccountRepo{}
+	svc := &adminServiceImpl{accountRepo: repo}
+	importedExtra := map[string]any{
+		codexFingerprintModeExtraKey: "random",
+		codexFingerprintSeedExtraKey: userSuppliedCodexFingerprintSeed,
+	}
+
+	first, err := svc.CreateAccount(context.Background(), &CreateAccountInput{
+		Name:                 "codex-import-1",
+		Platform:             PlatformOpenAI,
+		Type:                 AccountTypeOAuth,
+		SkipDefaultGroupBind: true,
+		Extra:                importedExtra,
+	})
+	require.NoError(t, err)
+	second, err := svc.CreateAccount(context.Background(), &CreateAccountInput{
+		Name:                 "codex-import-2",
+		Platform:             PlatformOpenAI,
+		Type:                 AccountTypeOAuth,
+		SkipDefaultGroupBind: true,
+		Extra:                importedExtra,
+	})
+	require.NoError(t, err)
+
+	firstSeed := requireValidCodexFingerprintSeed(t, first.Extra)
+	secondSeed := requireValidCodexFingerprintSeed(t, second.Extra)
+	require.NotEqual(t, userSuppliedCodexFingerprintSeed, firstSeed)
+	require.NotEqual(t, userSuppliedCodexFingerprintSeed, secondSeed)
+	require.NotEqual(t, firstSeed, secondSeed)
+	require.Equal(t, userSuppliedCodexFingerprintSeed, importedExtra[codexFingerprintSeedExtraKey])
+}
+
 func TestAdminUpdateAccountPreservesExistingSeedAndStripsUserSeed(t *testing.T) {
 	accountID := int64(201)
 	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
@@ -144,6 +177,54 @@ func TestAdminUpdateAccountExtraStripsSeedAndLeavesAtomicEnsureToRepository(t *t
 	require.NotContains(t, repo.updates[accountID][0], codexFingerprintSeedExtraKey)
 }
 
+func TestAdminUpdateAccountExtraCanonicalizesCodexFingerprintMode(t *testing.T) {
+	tests := []struct {
+		name string
+		mode any
+		want string
+	}{
+		{name: "null defaults random", mode: nil, want: "random"},
+		{name: "invalid type defaults random", mode: 42, want: "random"},
+		{name: "blank defaults random", mode: "  ", want: "random"},
+		{name: "off trims and folds case", mode: " OFF ", want: "off"},
+		{name: "session trims and folds case", mode: " Session ", want: "session"},
+		{name: "random multi trims and folds case", mode: " RANDOM_MULTI ", want: "random_multi"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			accountID := int64(205)
+			repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+				accountID: {ID: accountID, Platform: PlatformOpenAI, Type: AccountTypeOAuth},
+			}}
+
+			err := (&adminServiceImpl{accountRepo: repo}).UpdateAccountExtra(context.Background(), accountID, map[string]any{
+				codexFingerprintModeExtraKey: tt.mode,
+			})
+
+			require.NoError(t, err)
+			require.Len(t, repo.updates[accountID], 1)
+			require.Equal(t, tt.want, repo.updates[accountID][0][codexFingerprintModeExtraKey])
+		})
+	}
+}
+
+func TestBulkUpdateAccountsNullCodexFingerprintModeDefaultsRandomAndEnsuresSeed(t *testing.T) {
+	repo := &upstreamBillingProbeAccountRepo{}
+
+	result, err := (&adminServiceImpl{accountRepo: repo}).BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs: []int64{303, 304},
+		Extra: map[string]any{
+			codexFingerprintModeExtraKey: nil,
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 2, result.Success)
+	require.Len(t, repo.bulkUpdates, 1)
+	require.True(t, repo.bulkUpdates[0].EnsureCodexFingerprintSeed)
+	require.Equal(t, "random", repo.bulkUpdates[0].Extra[codexFingerprintModeExtraKey])
+}
+
 func TestBulkUpdateAccountsDoesNotPrewriteCodexSeed(t *testing.T) {
 	repo := &upstreamBillingProbeAccountRepo{}
 
@@ -162,6 +243,23 @@ func TestBulkUpdateAccountsDoesNotPrewriteCodexSeed(t *testing.T) {
 	require.True(t, repo.bulkUpdates[0].EnsureCodexFingerprintSeed)
 	require.Equal(t, "session", repo.bulkUpdates[0].Extra[codexFingerprintModeExtraKey])
 	require.NotContains(t, repo.bulkUpdates[0].Extra, codexFingerprintSeedExtraKey)
+}
+
+func TestBulkUpdateAccountsRandomMultiEnsuresManagedSeed(t *testing.T) {
+	repo := &upstreamBillingProbeAccountRepo{}
+
+	result, err := (&adminServiceImpl{accountRepo: repo}).BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs: []int64{305, 306},
+		Extra: map[string]any{
+			codexFingerprintModeExtraKey: "random_multi",
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 2, result.Success)
+	require.Len(t, repo.bulkUpdates, 1)
+	require.True(t, repo.bulkUpdates[0].EnsureCodexFingerprintSeed)
+	require.Equal(t, "random_multi", repo.bulkUpdates[0].Extra[codexFingerprintModeExtraKey])
 }
 
 type codexSeedDuplicateRepo struct {
@@ -212,6 +310,56 @@ func TestDuplicateCreatePathMintsFreshSeedWhenEligible(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, testCodexFingerprintSeed, requireValidCodexFingerprintSeed(t, account.Extra))
 	require.Equal(t, "session", account.Extra[codexFingerprintModeExtraKey])
+}
+
+func TestAccountServiceCreateDefaultsNewOpenAIOAuthToRandom(t *testing.T) {
+	ctx := context.Background()
+	repo := &upstreamBillingProbeAccountRepo{accounts: make(map[int64]*Account)}
+	svc := NewAccountService(repo, nil)
+
+	created, err := svc.Create(ctx, CreateAccountRequest{
+		Name:     "default-random",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+	})
+	require.NoError(t, err)
+	require.Equal(t, string(codexFingerprintRandom), created.Extra[codexFingerprintModeExtraKey])
+	requireValidCodexFingerprintSeed(t, created.Extra)
+}
+
+func TestAccountServiceCreateExplicitOffRemainsOff(t *testing.T) {
+	ctx := context.Background()
+	repo := &upstreamBillingProbeAccountRepo{accounts: make(map[int64]*Account)}
+	svc := NewAccountService(repo, nil)
+
+	created, err := svc.Create(ctx, CreateAccountRequest{
+		Name:     "explicit-off",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Extra:    map[string]any{codexFingerprintModeExtraKey: "off"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "off", created.Extra[codexFingerprintModeExtraKey])
+	require.NotContains(t, created.Extra, codexFingerprintSeedExtraKey)
+}
+
+func TestAccountServiceCreateExplicitRandomMintsFreshSeed(t *testing.T) {
+	ctx := context.Background()
+	repo := &upstreamBillingProbeAccountRepo{accounts: make(map[int64]*Account)}
+	svc := NewAccountService(repo, nil)
+
+	created, err := svc.Create(ctx, CreateAccountRequest{
+		Name:     "explicit-random",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{
+			codexFingerprintModeExtraKey: codexFingerprintRandom,
+			codexFingerprintSeedExtraKey: userSuppliedCodexFingerprintSeed,
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, string(codexFingerprintRandom), created.Extra[codexFingerprintModeExtraKey])
+	require.NotEqual(t, userSuppliedCodexFingerprintSeed, requireValidCodexFingerprintSeed(t, created.Extra))
 }
 
 func TestAccountServiceCreateAndUpdateCodexSeedLifecycle(t *testing.T) {

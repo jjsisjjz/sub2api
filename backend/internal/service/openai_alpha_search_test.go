@@ -113,7 +113,6 @@ func TestForwardAlphaSearchPATUsesResponsesWebSearchFallback(t *testing.T) {
 	c.Request.Header.Set("OpenAI-Beta", "responses=experimental")
 	c.Request.Header.Set("Accept-Language", "zh-CN")
 	c.Request.Header.Set("Authorization", "Bearer client-token")
-	c.Request.Header.Set("Session_ID", "session-client")
 	c.Request.Header.Set("Conversation_ID", "conversation-client")
 	c.Request.Header.Set("X-Codex-Beta-Features", "feature-a")
 	c.Request.Header.Set("X-Codex-Turn-State", "turn-state")
@@ -137,6 +136,10 @@ func TestForwardAlphaSearchPATUsesResponsesWebSearchFallback(t *testing.T) {
 			"chatgpt_account_id":         "chatgpt-account",
 			"chatgpt_account_is_fedramp": true,
 		},
+		Extra: map[string]any{
+			codexFingerprintModeExtraKey: string(codexFingerprintRandomMulti),
+			codexFingerprintSeedExtraKey: testCodexFingerprintSeed,
+		},
 	}
 
 	result, err := service.ForwardAlphaSearch(context.Background(), c, account, body)
@@ -155,7 +158,6 @@ func TestForwardAlphaSearchPATUsesResponsesWebSearchFallback(t *testing.T) {
 	require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
 	require.Equal(t, "responses=experimental", upstream.lastReq.Header.Get("OpenAI-Beta"))
 	require.Equal(t, codexCLIVersion, upstream.lastReq.Header.Get("Version"))
-	require.Equal(t, `{"turn_id":"turn-1"}`, upstream.lastReq.Header.Get("X-Codex-Turn-Metadata"))
 	require.Equal(t, openai.CodexDefaultOriginator, upstream.lastReq.Header.Get("Originator"))
 	require.Empty(t, upstream.lastReq.Header.Get("X-Codex-Beta-Features"))
 	require.Empty(t, upstream.lastReq.Header.Get("X-Codex-Turn-State"))
@@ -168,6 +170,7 @@ func TestForwardAlphaSearchPATUsesResponsesWebSearchFallback(t *testing.T) {
 	require.False(t, gjson.GetBytes(upstream.lastBody, "store").Bool())
 	require.Equal(t, "web_search", gjson.GetBytes(upstream.lastBody, "tools.0.type").String())
 	require.Contains(t, gjson.GetBytes(upstream.lastBody, "input.0.content.0.text").String(), `"search_query"`)
+	assertCodexFingerprintFlatOutbound(t, account, upstream.lastReq, upstream.lastBody, "responses-cache-key")
 }
 
 func TestForwardAlphaSearchPATBackfillsMissingChatGPTAccountMetadata(t *testing.T) {

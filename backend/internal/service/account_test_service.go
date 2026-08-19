@@ -693,6 +693,11 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		upstreamTestModelID = normalizeOpenAIModelForUpstream(credentialAccount, testModelID)
 	}
 	payload := createOpenAITestPayload(upstreamTestModelID, isOAuth)
+	var fpIDs *codexFingerprintIDs
+	if isOAuth {
+		fpIDs = resolveCodexFingerprintIDsFromRequest(account, codexFingerprintInboundHeaders(c))
+		applyCodexFingerprintClientMetadata(payload, fpIDs)
+	}
 	payloadBytes, _ := json.Marshal(payload)
 	if isOAuth && s.cfg != nil && s.cfg.Gateway.CodexQuotaOverdraftEnabled && account.IsOpenAIResponsesWeeklyOverdraftEnabled() {
 		if overdraftBody, changed, _ := injectCodexQuotaOverdraft(payloadBytes); changed {
@@ -747,6 +752,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		// 与真实转发一致：账号级自定义 UA 同样作为管理员显式配置传入，否则测试用的身份
 		// 与该账号真实出站的身份不是同一个（issue #3901 的配对不变式由收口保证）。
 		enforceCodexIdentityHeadersWithUA(req.Header, credentialAccount.GetOpenAIUserAgent())
+		applyCodexFingerprintHeaders(req.Header, fpIDs)
 	}
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
@@ -2040,7 +2046,16 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 	if isOAuth {
 		testModelID = normalizeOpenAIModelForUpstream(credentialAccount, testModelID)
 	}
-	payloadBytes, _ := json.Marshal(createOpenAICompactProbePayload(testModelID, isOAuth))
+	probeSessionID := compactProbeSessionID(account.ID)
+	payload := createOpenAICompactProbePayload(testModelID, isOAuth)
+	var fpIDs *codexFingerprintIDs
+	if isOAuth {
+		probeHeaders := make(http.Header)
+		probeHeaders.Set("Session_ID", probeSessionID)
+		fpIDs = resolveCodexFingerprintIDsFromRequest(account, probeHeaders)
+		applyCodexFingerprintClientMetadata(payload, fpIDs)
+	}
+	payloadBytes, _ := json.Marshal(payload)
 	if !agentIdentityTaskRecoveryWasTried(ctx) {
 		s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
 	}
@@ -2072,19 +2087,14 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 	if isOAuth {
 		enforceCodexIdentityHeadersWithUA(req.Header, credentialAccount.GetOpenAIUserAgent())
 	}
-	probeSessionID := compactProbeSessionID(account.ID)
 	req.Header.Set("Session_ID", probeSessionID)
 	req.Header.Set("Conversation_ID", probeSessionID)
 
 	if isOAuth {
 		req.Host = "chatgpt.com"
 		setOpenAIChatGPTAccountHeaders(req.Header, credentialAccount)
-		// 指纹收敛：探测与真实转发走同一个 /responses 端点，身份也必须同构，
-		// 否则探测流量会以「缺 x-codex-installation-id + 非收敛 session」的
-		// 形态暴露在上游眼里。账号关闭收敛（off）时返回 nil，探测保持原样。
-		if fpIDs := resolveCodexFingerprintIDsFromRequest(account, req.Header); fpIDs != nil {
-			applyCodexFingerprintHeaders(req.Header, fpIDs)
-		}
+		// 探测与真实转发走同一个 /responses 端点，头和 body 使用同一快照。
+		applyCodexFingerprintHeaders(req.Header, fpIDs)
 	}
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
@@ -2954,6 +2964,11 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to build image request: %s", err.Error()))
 	}
+	fpIDs := resolveCodexFingerprintIDsFromRequest(account, codexFingerprintInboundHeaders(c))
+	responsesBody, _, err = applyCodexFingerprintClientMetadataRaw(responsesBody, fpIDs)
+	if err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to apply image request fingerprint: %s", err.Error()))
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatgptCodexAPIURL, bytes.NewReader(responsesBody))
 	if err != nil {
@@ -2988,6 +3003,7 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 	// 与真实转发一致：账号级自定义 UA 同样作为管理员显式配置传入，否则测试用的身份
 	// 与该账号真实出站的身份不是同一个（issue #3901 的配对不变式由收口保证）。
 	enforceCodexIdentityHeadersWithUA(req.Header, credentialAccount.GetOpenAIUserAgent())
+	applyCodexFingerprintHeaders(req.Header, fpIDs)
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {

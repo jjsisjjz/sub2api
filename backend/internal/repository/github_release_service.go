@@ -61,11 +61,12 @@ func NewGitHubReleaseClient(proxyURL string, allowDirectOnProxyError bool) servi
 		downloadClient = &http.Client{Timeout: 10 * time.Minute}
 	}
 	downloadClient = cloneHTTPClient(downloadClient)
+	downloadClient.CheckRedirect = githubAPICheckRedirect(downloadClient.CheckRedirect)
 
 	return &githubReleaseClient{
 		httpClient:         apiClient,
 		downloadHTTPClient: downloadClient,
-		updateGitHubToken:  os.Getenv("UPDATE_GITHUB_TOKEN"),
+		updateGitHubToken:  strings.TrimSpace(os.Getenv("UPDATE_GITHUB_TOKEN")),
 	}
 }
 
@@ -102,6 +103,33 @@ func (c *githubReleaseClient) newAPIRequest(ctx context.Context, url string) (*h
 		req.Header.Set("Authorization", "Bearer "+c.updateGitHubToken)
 	}
 	return req, nil
+}
+
+func (c *githubReleaseClient) newAssetRequest(ctx context.Context, rawURL string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "Sub2API-Updater")
+	if isGitHubAPIURL(req.URL) {
+		req.Header.Set("Accept", "application/octet-stream")
+		if c.updateGitHubToken != "" {
+			req.Header.Set("Authorization", "Bearer "+c.updateGitHubToken)
+		}
+	}
+	return req, nil
+}
+
+func (c *githubReleaseClient) preferAuthenticatedAssetURLs(release *service.GitHubRelease) {
+	if release == nil || c.updateGitHubToken == "" {
+		return
+	}
+	for i := range release.Assets {
+		assetURL, err := url.Parse(release.Assets[i].APIURL)
+		if err == nil && isGitHubAPIURL(assetURL) {
+			release.Assets[i].BrowserDownloadURL = release.Assets[i].APIURL
+		}
+	}
 }
 
 func (c *githubReleaseClientError) FetchLatestRelease(ctx context.Context, repo string) (*service.GitHubRelease, error) {
@@ -142,6 +170,7 @@ func (c *githubReleaseClient) FetchLatestRelease(ctx context.Context, repo strin
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
 		return nil, err
 	}
+	c.preferAuthenticatedAssetURLs(&release)
 
 	return &release, nil
 }
@@ -174,12 +203,15 @@ func (c *githubReleaseClient) FetchRecentReleases(ctx context.Context, repo stri
 	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
 		return nil, err
 	}
+	for _, release := range releases {
+		c.preferAuthenticatedAssetURLs(release)
+	}
 
 	return releases, nil
 }
 
 func (c *githubReleaseClient) DownloadFile(ctx context.Context, url, dest string, maxSize int64) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := c.newAssetRequest(ctx, url)
 	if err != nil {
 		return err
 	}
@@ -227,12 +259,12 @@ func (c *githubReleaseClient) DownloadFile(ctx context.Context, url, dest string
 }
 
 func (c *githubReleaseClient) FetchChecksumFile(ctx context.Context, url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := c.newAssetRequest(ctx, url)
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.downloadHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

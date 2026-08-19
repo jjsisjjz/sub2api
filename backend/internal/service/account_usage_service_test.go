@@ -2,10 +2,32 @@ package service
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"testing"
 	"time"
 )
+
+func TestBuildOpenAICodexSnapshotProbeRequestRandomMultiFingerprintParity(t *testing.T) {
+	account := newRandomCodexFingerprintCompatAccount(3210)
+	account.Extra[codexFingerprintModeExtraKey] = string(codexFingerprintRandomMulti)
+	svc := &AccountUsageService{}
+
+	req, err := svc.buildOpenAICodexSnapshotProbeRequest(context.Background(), account, "probe-token")
+	if err != nil {
+		t.Fatalf("buildOpenAICodexSnapshotProbeRequest() error = %v", err)
+	}
+	defer func() { _ = req.Body.Close() }()
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("read probe request body: %v", err)
+	}
+
+	assertCodexFingerprintFlatOutbound(t, account, req, body, "")
+	if got := req.Header.Get("Authorization"); got != "Bearer probe-token" {
+		t.Fatalf("Authorization = %q, want Bearer probe-token", got)
+	}
+}
 
 type accountUsageCodexProbeRepo struct {
 	stubOpenAIAccountRepo
